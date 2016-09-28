@@ -13,6 +13,7 @@ import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.Name;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
@@ -64,6 +65,7 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
         .map(f -> fieldToElementInfo(classAnnotations, f))
         .filter(p -> p != null)
         .map(ei -> elementInfoToAccessors(utilityClass, typeUtils, element, methods, ei))
+        .filter(p -> p != null)
         .collect(toList());
     return result;
   }
@@ -110,7 +112,14 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
     if (methName != null)
       result = result.withWithName(methName);
 
+    if (!isValid(result))
+      return null;
     return result;
+  }
+
+  private boolean isValid(AccessorInfo result)
+  {
+    return result.getGetterName() != null;
   }
 
   private String findWither(Types typeUtils, TypeElement enclosingElementType, List<? extends Element> methods,
@@ -148,7 +157,9 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
         if (paramMatch)
         {
           boolean returnTypeMatch = enclosingElementType.asType().equals(ee.getReturnType());
-          return returnTypeMatch;
+          if(returnTypeMatch)
+            return m.getModifiers().contains(Modifier.PUBLIC);
+          return false;
         }
       }
     }
@@ -174,7 +185,9 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
           if (paramMatch)
           {
             boolean returnTypeMatch = typeMirrorToClass(typeUtils, ee.getReturnType()) == null;
-            return returnTypeMatch;
+            if (returnTypeMatch)
+              return m.getModifiers().contains(Modifier.PUBLIC);
+            return false;
           }
         }
       }
@@ -198,7 +211,9 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
         if (returnTypeMatch)
         {
           boolean noParams = ee.getParameters().isEmpty();
-          return noParams;
+          if (noParams)
+            return m.getModifiers().contains(Modifier.PUBLIC);
+          return false;
         }
       }
       return false;
