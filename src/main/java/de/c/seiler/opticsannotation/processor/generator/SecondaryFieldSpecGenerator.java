@@ -2,6 +2,7 @@ package de.c.seiler.opticsannotation.processor.generator;
 
 import static de.c.seiler.opticsannotation.processor.util.Strings.isPrimitive;
 import static de.c.seiler.opticsannotation.processor.util.Strings.isPrimitiveBoolean;
+import static java.util.stream.Collectors.toList;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -15,6 +16,7 @@ import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 
+import de.c.seiler.opticsannotation.processor.ClassInfo;
 import de.c.seiler.opticsannotation.processor.OpticInfo;
 import de.c.seiler.opticsannotation.processor.OpticType;
 import de.c.seiler.opticsannotation.processor.util.Tree;
@@ -52,23 +54,18 @@ public class SecondaryFieldSpecGenerator
 
   private FieldSpec toSecondaryFieldSpec(List<OpticInfo> l)
   {
-    System.err.println();
     OpticType opticType = l.stream().map(OpticInfo::getType).reduce(OpticType::weaker)
         .orElseThrow(IllegalArgumentException::new);
-    System.err.println(opticType);
     String fieldName = l.stream().map(oi -> oi.getAccessor().getTargetName()).collect(Collectors.joining(DELIMITER));
-    System.err.println(fieldName);
 
     OpticInfo first = l.get(0);
     OpticInfo last = l.get(l.size() - 1);
     ClassName opticClassName = parent.opticTypeToClassName.get(opticType);
-    TypeName baseTypName = ClassName.bestGuess(OpticInfo.Accessor_Base.get(first));
-    String targetClass = OpticInfo.Accessor_Target.get(last);
+    TypeName baseTypName = buildTypeName(OpticInfo.Accessor_Base.get(first));
+    ClassInfo targetClass = OpticInfo.Accessor_Target.get(last);
     ParameterizedTypeName ptn = buildParameterizedTypeName(opticClassName, baseTypName, targetClass);
-    System.err.println(ptn);
 
     FormatAndParams fsAndP = buildFormatStringAndParams(l, first);
-    System.err.println(fsAndP);
     FieldSpec result = FieldSpec
         .builder(ptn, fieldName, Modifier.PUBLIC, Modifier.STATIC)
         .initializer(fsAndP.getFormatString(), fsAndP.getParams().toArray())
@@ -76,15 +73,16 @@ public class SecondaryFieldSpecGenerator
     return result;
   }
 
-  ParameterizedTypeName buildParameterizedTypeName(ClassName opticClassName, TypeName baseTypName, String targetClass)
+  ParameterizedTypeName buildParameterizedTypeName(ClassName opticClassName, TypeName baseTypName,
+      ClassInfo targetClass)
   {
     ParameterizedTypeName ptn;
-    if (isPrimitive(targetClass))
+    if (isPrimitive(targetClass.getName()))
       ptn = ParameterizedTypeName.get(opticClassName, baseTypName);
-    else if (isPrimitiveBoolean(targetClass))
+    else if (isPrimitiveBoolean(targetClass.getName()))
       ptn = ParameterizedTypeName.get(opticClassName, baseTypName, ClassName.get(Boolean.class));
     else
-      ptn = ParameterizedTypeName.get(opticClassName, baseTypName, ClassName.bestGuess(targetClass));
+      ptn = ParameterizedTypeName.get(opticClassName, baseTypName, buildTypeName(targetClass));
     return ptn;
   }
 
@@ -120,4 +118,19 @@ public class SecondaryFieldSpecGenerator
     String formatString;
     ArrayList<String> params;
   }
+
+  private TypeName buildTypeName(ClassInfo base)
+  {
+    ClassName baseClassName = ClassName.bestGuess(base.getName());
+    List<ClassInfo> tp = base.getTypeParams();
+    if (tp.isEmpty())
+      return baseClassName;
+
+    TypeName[] typeNames = tp.stream()
+        .map(t -> buildTypeName(t))
+        .collect(toList())
+        .toArray(new TypeName[0]);
+    return ParameterizedTypeName.get(baseClassName, typeNames);
+  }
+
 }

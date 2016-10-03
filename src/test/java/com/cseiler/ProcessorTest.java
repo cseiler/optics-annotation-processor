@@ -23,7 +23,7 @@ public class ProcessorTest
 
   @Test
   public void runAnnoationProcessor() throws Exception {
-     String source = "C:/Data/src/eclipse-workspace/AnnotationTest/src";
+     String source = "C:/dev/src/optics/AnnotationTest/src";
 
      Iterable<JavaFileObject> files = getSourceFiles(source);
 

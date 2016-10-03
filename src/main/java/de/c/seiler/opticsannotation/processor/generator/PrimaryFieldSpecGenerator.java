@@ -2,6 +2,9 @@ package de.c.seiler.opticsannotation.processor.generator;
 
 import static de.c.seiler.opticsannotation.processor.util.Strings.isPrimitive;
 import static de.c.seiler.opticsannotation.processor.util.Strings.isPrimitiveBoolean;
+import static java.util.stream.Collectors.toList;
+
+import java.util.List;
 
 import javax.lang.model.element.Modifier;
 
@@ -9,11 +12,12 @@ import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.ParameterizedTypeName;
+import com.squareup.javapoet.TypeName;
 
 import de.c.seiler.opticsannotation.processor.AccessorInfo;
+import de.c.seiler.opticsannotation.processor.ClassInfo;
 import de.c.seiler.opticsannotation.processor.OpticInfo;
 import de.c.seiler.opticsannotation.processor.OpticType;
-import de.c.seiler.opticsannotation.processor.util.Strings;
 import lombok.Value;
 
 public class PrimaryFieldSpecGenerator
@@ -32,7 +36,7 @@ public class PrimaryFieldSpecGenerator
   {
     this.parent = parent;
   }
-  
+
   public FieldSpec toPrimaryFieldSpec(OpticInfo oi)
   {
     FieldSpec result;
@@ -72,7 +76,7 @@ public class PrimaryFieldSpecGenerator
 
   private FieldSpec toPrimaryLensFieldSpec(AccessorInfo gs, OpticType ot)
   {
-    ClassName base = ClassName.bestGuess(gs.getBase());
+    TypeName base = buildTypeName(gs.getBase());
     OpticClassInfo oi = buildOpticClassInfo(base, gs.getTarget(), ot);
 
     String wthName;
@@ -90,10 +94,24 @@ public class PrimaryFieldSpecGenerator
     return result;
   }
 
+  private TypeName buildTypeName(ClassInfo base)
+  {
+    ClassName baseClassName = ClassName.bestGuess(base.getName());
+    List<ClassInfo> tp = base.getTypeParams();
+    if (tp.isEmpty())
+      return baseClassName;
+
+    TypeName[] typeNames = tp.stream()
+        .map(t -> buildTypeName(t))
+        .collect(toList())
+        .toArray(new TypeName[0]);
+    return ParameterizedTypeName.get(baseClassName, typeNames);
+  }
+
   private FieldSpec toPrimaryOptionalLensFieldSpec(AccessorInfo gs, OpticType ot)
   {
-    ClassName base = ClassName.bestGuess(gs.getBase());
-    OpticClassInfo oi = buildOpticClassInfoForOptional(base, gs.getTarget(), ot);
+    TypeName base = buildTypeName(gs.getBase());
+    OpticClassInfo oi = buildOpticClassInfo(base, gs.getTarget(), ot);
     String wthName;
     FieldSpec result;
     if ((wthName = gs.getWithName()) != null)
@@ -112,7 +130,7 @@ public class PrimaryFieldSpecGenerator
 
   private FieldSpec toPrimaryViewFieldSpec(AccessorInfo gs, OpticType ot)
   {
-    ClassName base = ClassName.bestGuess(gs.getBase());
+    TypeName base = buildTypeName(gs.getBase());
     OpticClassInfo oi = buildOpticClassInfo(base, gs.getTarget(), ot);
     FieldSpec result = FieldSpec
         .builder(oi.getOpticFor(), gs.getTargetName(), Modifier.PUBLIC, Modifier.STATIC)
@@ -123,8 +141,8 @@ public class PrimaryFieldSpecGenerator
 
   private FieldSpec toPrimaryOptionalViewFieldSpec(AccessorInfo gs, OpticType ot)
   {
-    ClassName base = ClassName.bestGuess(gs.getBase());
-    OpticClassInfo oi = buildOpticClassInfoForOptional(base, gs.getTarget(), ot);
+    TypeName base = buildTypeName(gs.getBase());
+    OpticClassInfo oi = buildOpticClassInfo(base, gs.getTarget(), ot);
     FieldSpec result = FieldSpec
         .builder(oi.getOpticFor(), gs.getTargetName(), Modifier.PUBLIC, Modifier.STATIC)
         .initializer(CodeBlock.of(OPTIONAL_VIEW, oi.getOoptic(), oi.getOptic(), base, gs.getGetterName()))
@@ -140,42 +158,22 @@ public class PrimaryFieldSpecGenerator
     ParameterizedTypeName opticFor;
   }
 
-  private OpticClassInfo buildOpticClassInfo(ClassName base, String target, OpticType ot)
+  private OpticClassInfo buildOpticClassInfo(TypeName base, ClassInfo target, OpticType ot)
   {
     ClassName ooptic;
     ClassName optic;
     ParameterizedTypeName opticFor;
 
-    optic = parent.opticTypeToClassName.get(ot);
-    ooptic = parent.opticTypeToClassName.get(OpticType.findOptionalOptic(ot));
-    if (isPrimitive(target))
-      opticFor = ParameterizedTypeName.get(optic, base);
-    else if(isPrimitiveBoolean(target))
-      opticFor = ParameterizedTypeName.get(optic, base, ClassName.get(Boolean.class));      
-    else
-      opticFor = ParameterizedTypeName.get(optic, base, ClassName.bestGuess(target));
-    OpticClassInfo of = new OpticClassInfo(ooptic, optic, opticFor);
-    return of;
-  }
-
-  private OpticClassInfo buildOpticClassInfoForOptional(ClassName base, String target, OpticType ot)
-  {
-    ClassName ooptic;
-    ClassName optic;
-    ParameterizedTypeName opticFor;
-
+    boolean mandatory = ot.istMandatory();
     optic = parent.opticTypeToClassName.get(OpticType.findMandatoryOptic(ot));
     ooptic = parent.opticTypeToClassName.get(OpticType.findOptionalOptic(ot));
-
-    if (Strings.isPrimitive(target))
-      opticFor = ParameterizedTypeName.get(ooptic, base);
-    else if(isPrimitiveBoolean(target))
-      opticFor = ParameterizedTypeName.get(ooptic, base, ClassName.get(Boolean.class));      
+    if (isPrimitive(target.getName()))
+      opticFor = ParameterizedTypeName.get(mandatory?optic:ooptic, base);
+    else if (isPrimitiveBoolean(target.getName()))
+      opticFor = ParameterizedTypeName.get(mandatory?optic:ooptic, base, ClassName.get(Boolean.class));
     else
-      opticFor = ParameterizedTypeName.get(ooptic, base, ClassName.bestGuess(target));
-
+      opticFor = ParameterizedTypeName.get(mandatory?optic:ooptic, base, buildTypeName(target));
     OpticClassInfo of = new OpticClassInfo(ooptic, optic, opticFor);
     return of;
   }
-
 }

@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
@@ -39,55 +40,49 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
   private static final String VALUE = "Value";
 
   @Override
-  public List<AccessorInfo> buildAccessors(Types typeUtils, Elements elementUtils, String utilityClass,
+  public Stream<AccessorInfo> buildAccessors(Types typeUtils, Elements elementUtils, String utilityClass,
       String[] excludedFields, TypeElement element)
   {
     List<String> exFields = Arrays.asList(excludedFields);
-    List<AccessorInfo> result = Collections.emptyList();
 
-    //find all fields
-    List<? extends Element> ee = element.getEnclosedElements();
-
-    List<? extends Element> fields = ee.stream()
-        .filter(e0 -> e0.getKind().equals(ElementKind.FIELD))
-        .filter(el -> !exFields.contains(el.getSimpleName().toString()))
-        .collect(toList());
     List<? extends AnnotationMirror> classAnnotations = elementUtils.getAllAnnotationMirrors(element)
         .stream()
         .filter(am -> !am.getAnnotationType().asElement().toString().equals(Optics.class.getName()))
         .collect(Collectors.toList());
-
+    //find all fields
+    List<? extends Element> ee = element.getEnclosedElements();
     List<? extends Element> methods = ee.stream()
         .filter(e0 -> e0.getKind().equals(ElementKind.METHOD))
         .collect(toList());
 
-    result = fields.stream()
-        .map(f -> fieldToElementInfo(classAnnotations, f))
+    return ee.stream()
+        .filter(e0 -> e0.getKind().equals(ElementKind.FIELD))
+        .filter(el -> !exFields.contains(el.getSimpleName().toString()))
+        .map(f -> fieldToElementInfo(typeUtils, classAnnotations, f))
         .filter(p -> p != null)
         .map(ei -> elementInfoToAccessors(utilityClass, typeUtils, element, methods, ei))
-        .filter(p -> p != null)
-        .collect(toList());
-    return result;
+        .filter(p -> p != null);
   }
 
-  private AccessorInfo elementInfoToAccessors(String utilityClass, Types typeUtils, TypeElement enclosingElementType,
+  private AccessorInfo elementInfoToAccessors(String utilityClass, Types typeUtils, TypeElement baseElement,
       List<? extends Element> methods,
       ElementInfo ei)
   {
-    String name = ei.getName();
-    String cname = Strings.capitalize(name);
+    ClassInfo baseElementClassInfo = buildClassInfo(typeUtils, (DeclaredType) baseElement.asType());
 
     //for each field look for getters (special case lombok)
     //for each field look for suitable (!) setters (special case lombok)
 
     AccessorInfo result = null;
-    String target = ei.getClassName();
-    result = new AccessorInfo(utilityClass, enclosingElementType.toString(), cname,
-        target, !ei.isNonNull(),
+    String name = ei.getName();
+    String cname = Strings.capitalize(name);
+    ClassInfo targetClassInfo = ei.getClassInfo();
+    result = new AccessorInfo(utilityClass, baseElementClassInfo, cname,
+        targetClassInfo, !ei.isNonNull(),
         null, null, null);
 
     //getter
-    if (!isPrimitiveBoolean(target))
+    if (!isPrimitiveBoolean(targetClassInfo.getName()))
     {
       String getterName = "get" + cname;
       boolean found = findGetter(typeUtils, methods, ei, getterName);
@@ -108,7 +103,7 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
       result = result.withSetterName(setterName);
     //with
     String withName = "with" + cname;
-    String methName = findWither(typeUtils, enclosingElementType, methods, ei, setterName, withName);
+    String methName = findWither(typeUtils, baseElement, methods, ei, setterName, withName);
     if (methName != null)
       result = result.withWithName(methName);
 
@@ -153,11 +148,11 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
       if (params.size() == 1)
       {
         VariableElement p = params.get(0);
-        boolean paramMatch = ei.getClassName().equals(typeMirrorToClass(typeUtils, p.asType()));
+        boolean paramMatch = ei.getClassInfo().equals(typeMirrorToClassInfo(typeUtils, p.asType()));
         if (paramMatch)
         {
           boolean returnTypeMatch = enclosingElementType.asType().equals(ee.getReturnType());
-          if(returnTypeMatch)
+          if (returnTypeMatch)
             return m.getModifiers().contains(Modifier.PUBLIC);
           return false;
         }
@@ -181,10 +176,10 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
         if (params.size() == 1)
         {
           VariableElement p = params.get(0);
-          boolean paramMatch = ei.getClassName().equals(typeMirrorToClass(typeUtils, p.asType()));
+          boolean paramMatch = ei.getClassInfo().equals(typeMirrorToClassInfo(typeUtils, p.asType()));
           if (paramMatch)
           {
-            boolean returnTypeMatch = typeMirrorToClass(typeUtils, ee.getReturnType()) == null;
+            boolean returnTypeMatch = typeMirrorToClassInfo(typeUtils, ee.getReturnType()) == null;
             if (returnTypeMatch)
               return m.getModifiers().contains(Modifier.PUBLIC);
             return false;
@@ -207,7 +202,7 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
       if (nameMatch)
       {
         ExecutableElement ee = (ExecutableElement) m;
-        boolean returnTypeMatch = ei.getClassName().equals(typeMirrorToClass(typeUtils, ee.getReturnType()));
+        boolean returnTypeMatch = ei.getClassInfo().equals(typeMirrorToClassInfo(typeUtils, ee.getReturnType()));
         if (returnTypeMatch)
         {
           boolean noParams = ee.getParameters().isEmpty();
@@ -227,34 +222,33 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
   {
     Element element;
     String name;
-    String className;
+    ClassInfo classInfo;
     boolean nonNull;
     boolean lombokGetter;
     boolean lombokSetter;
     boolean lombokWither;
   }
 
-  private String typeMirrorToClass(Types typeUtils, TypeMirror tm)
+  private ClassInfo typeMirrorToClassInfo(Types typeUtils, TypeMirror tm)
   {
-    Element e = typeUtils.asElement(tm);
     TypeKind kind = tm.getKind();
-    String result = null;
+    ClassInfo result = null;
     switch (kind)
     {
       case DECLARED:
-        result = toClassDeclaredType(e);
+        result = buildClassInfo(typeUtils, (DeclaredType) tm);
         break;
       case INT:
-        result = java.lang.Integer.TYPE.toString();
+        result = buildPrimitiveClassInfo(java.lang.Integer.TYPE.toString());
         break;
       case LONG:
-        result = java.lang.Long.TYPE.toString();
+        result = buildPrimitiveClassInfo(java.lang.Long.TYPE.toString());
         break;
       case DOUBLE:
-        result = java.lang.Double.TYPE.toString();
+        result = buildPrimitiveClassInfo(java.lang.Double.TYPE.toString());
         break;
       case BOOLEAN:
-        result = java.lang.Boolean.TYPE.toString();
+        result = buildPrimitiveClassInfo(java.lang.Boolean.TYPE.toString());
         break;
       default:
         break;
@@ -262,27 +256,8 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
     return result;
   }
 
-  private String toClassDeclaredType(final Element t)
-  {
-    String result;
-
-    DeclaredType dt = (DeclaredType) t.asType();
-    TypeElement te = (TypeElement) dt.asElement();
-    Name qn = te.getQualifiedName();
-    result = qn.toString();
-    //    try
-    //    {
-    //      result = Class.forName(qn.toString());
-    //    }
-    //    catch (ClassNotFoundException e)
-    //    {
-    //      e.printStackTrace();
-    //      result = null;
-    //    }
-    return result;
-  }
-
-  private ElementInfo fieldToElementInfo(List<? extends AnnotationMirror> classAnnotations, Element field)
+  private ElementInfo fieldToElementInfo(Types typeUtils, List<? extends AnnotationMirror> classAnnotations,
+      Element field)
   {
     Name sn = field.getSimpleName();
     TypeMirror ft = field.asType();
@@ -292,22 +267,22 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
     switch (kind)
     {
       case DECLARED:
-        result = toNameClassDeclaredType(classAnnotations, field, result);
+        result = toNameClassDeclaredType(typeUtils, classAnnotations, field, result);
         break;
       case INT:
-        result = result.withClassName(java.lang.Integer.TYPE.getName());
+        result = result.withClassInfo(buildPrimitiveClassInfo(java.lang.Integer.TYPE.getName()));
         result = fieldAnnotations(classAnnotations, field, result);
         break;
       case LONG:
-        result = result.withClassName(java.lang.Long.TYPE.getName());
+        result = result.withClassInfo(buildPrimitiveClassInfo(java.lang.Long.TYPE.getName()));
         result = fieldAnnotations(classAnnotations, field, result);
         break;
       case DOUBLE:
-        result = result.withClassName(java.lang.Double.TYPE.getName());
+        result = result.withClassInfo(buildPrimitiveClassInfo(java.lang.Double.TYPE.getName()));
         result = fieldAnnotations(classAnnotations, field, result);
         break;
       case BOOLEAN:
-        result = result.withClassName(java.lang.Boolean.TYPE.getName());
+        result = result.withClassInfo(buildPrimitiveClassInfo(java.lang.Boolean.TYPE.getName()));
         result = fieldAnnotations(classAnnotations, field, result);
         break;
       default:
@@ -317,17 +292,30 @@ public class AccessorsProcessorImpl implements AccessorsProcessor
     return result;
   }
 
-  private ElementInfo toNameClassDeclaredType(List<? extends AnnotationMirror> classAnnotations, final Element field,
+  private ElementInfo toNameClassDeclaredType(Types typeUtils, List<? extends AnnotationMirror> classAnnotations,
+      final Element field,
       ElementInfo sofar)
   {
-
     DeclaredType dt = (DeclaredType) field.asType();
-    TypeElement te = (TypeElement) dt.asElement();
-    Name qn = te.getQualifiedName();
+    ClassInfo classInfo = buildClassInfo(typeUtils, dt);
     ElementInfo result = sofar;
-    result = result.withClassName(qn.toString());
+    result = result.withClassInfo(classInfo);
     result = fieldAnnotations(classAnnotations, field, result);
     return result;
+  }
+
+  private ClassInfo buildPrimitiveClassInfo(String name)
+  {
+    return new ClassInfo(name, Collections.emptyList());
+  }
+
+  private ClassInfo buildClassInfo(Types typeUtils, DeclaredType dt)
+  {
+    String name = typeUtils.erasure(dt).toString();
+    List<ClassInfo> params = dt.getTypeArguments().stream().filter(tm -> TypeKind.DECLARED.equals(tm.getKind()))
+        .map(tm -> buildClassInfo(typeUtils, (DeclaredType) tm)).collect(toList());
+
+    return new ClassInfo(name, params);
   }
 
   private ElementInfo fieldAnnotations(List<? extends AnnotationMirror> classAnnotations, final Element field,

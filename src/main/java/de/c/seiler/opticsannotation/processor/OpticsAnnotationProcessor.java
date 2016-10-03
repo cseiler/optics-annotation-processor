@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
@@ -89,7 +90,7 @@ public class OpticsAnnotationProcessor extends AbstractProcessor
 
   private OpticInfo accessorToOpticInfo(AccessorInfo a)
   {
-    String target = a.getTarget();
+    String target = a.getTarget().getName();
     OpticInfo result = new OpticInfo(a, null);
 
     Base base;
@@ -124,7 +125,7 @@ public class OpticsAnnotationProcessor extends AbstractProcessor
 
   private Map<String, List<Tree<OpticInfo>>> buildDependencyTree(List<OpticInfo> opticInfos)
   {
-    Map<String, List<OpticInfo>> byBase = opticInfos.stream()
+    Map<ClassInfo, List<OpticInfo>> byBase = opticInfos.stream()
         .collect(groupingBy(OpticInfo.Accessor_Base::get));
     Map<String, List<OpticInfo>> byUtilityClass = opticInfos.stream()
         .collect(groupingBy(OpticInfo.Accessor_UtilityClass::get));
@@ -139,9 +140,9 @@ public class OpticsAnnotationProcessor extends AbstractProcessor
     return result;
   }
 
-  private Tree<OpticInfo> refs(Map<String, List<OpticInfo>> byBase, OpticInfo r)
+  private Tree<OpticInfo> refs(Map<ClassInfo, List<OpticInfo>> byBase, OpticInfo r)
   {
-    String t = OpticInfo.Accessor_Target.get(r);
+    ClassInfo t = OpticInfo.Accessor_Target.get(r);
     List<OpticInfo> targets = byBase.getOrDefault(t, new ArrayList<>());
     Tree<OpticInfo> result = new Tree<OpticInfo>(r);
     if (targets.isEmpty())
@@ -152,28 +153,20 @@ public class OpticsAnnotationProcessor extends AbstractProcessor
 
   private List<AccessorInfo> analyseCode(RoundEnvironment roundEnv)
   {
-    List<AccessorInfo> getterSetters = new ArrayList<>();
     Set<? extends Element> ae = roundEnv.getElementsAnnotatedWith(Optics.class);
 
-    for (Element element : ae)
-    {
-      boolean valid = validateAndEmitErrors(messager, element);
-      if (valid)
-      {
-        TypeElement te = (TypeElement) element;
-        Optics annotation = te.getAnnotation(Optics.class);
+    return ae.stream().filter(e -> validateAndEmitErrors(messager, e)).flatMap(element -> {
+      TypeElement te = (TypeElement) element;
+      Optics annotation = te.getAnnotation(Optics.class);
 
-        //determine UtilityClass name
-        String presetUtilityClass = annotation.utilityClass();
-        String[] excludedFields = annotation.exclude();
-        String utilityClass = buildUtilityClassName(te.getQualifiedName(), presetUtilityClass);
+      //determine UtilityClass name
+      String presetUtilityClass = annotation.utilityClass();
+      String[] excludedFields = annotation.exclude();
+      String utilityClass = buildUtilityClassName(te.getQualifiedName(), presetUtilityClass);
 
-        List<AccessorInfo> getterSetter = gsProc.buildAccessors(typeUtils, elementUtils, utilityClass, excludedFields,
-            te);
-        getterSetters.addAll(getterSetter);
-      }
-    }
-    return getterSetters;
+      return gsProc.buildAccessors(typeUtils, elementUtils, utilityClass, excludedFields,
+          te);
+    }).collect(Collectors.toList());
   }
 
   private String buildUtilityClassName(Name typeName, String presetUtilityClass)

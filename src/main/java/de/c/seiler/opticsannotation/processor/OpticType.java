@@ -61,6 +61,11 @@ public enum OpticType
     return result;
   }
 
+  public boolean istMandatory()
+  {
+    return this.mode == Mode.Mandatory;
+  }
+  
   public boolean isPrimitive()
   {
     return this.target!=Target.Object;
