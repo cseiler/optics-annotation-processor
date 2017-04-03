@@ -22,7 +22,7 @@ public abstract class Trees
       return tt.getValue();
     Tree<T> tv = tt.getValue();
     List<Tree<T>> nl = new ArrayList<>(tv.getLeaves());
-    List<Tree<T>> tl = tt.getLeaves().stream().map(Trees::join).collect(Collectors.toList());
+    List<Tree<T>> tl = tt.getLeaves().stream().map(t -> join(t)).collect(Collectors.toList());
     nl.addAll(tl);
     return new Tree<>(tv.getValue(), nl);
   }
